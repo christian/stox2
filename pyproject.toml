@@ -1,0 +1,35 @@
+[project]
+name = "stox2"
+version = "0.1.0"
+description = "Offline tick store + ML sandbox for US equities"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "ib-insync>=0.9.86",
+  "polars>=1.5",
+  "duckdb>=1.0",
+  "pyarrow>=16.0",
+  "numpy>=1.26",
+  "pandas>=2.2",
+  "scikit-learn>=1.5",
+  "torch>=2.3",
+  "jupyter>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "ruff>=0.5",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
