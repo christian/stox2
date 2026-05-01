@@ -54,6 +54,14 @@ con.sql("""
 """).df()
 ```
 
+5) Launch the local explorer:
+
+```bash
+uv run streamlit run streamlit_app.py
+```
+
+This opens a small local UI for browsing tick parquet data by symbol and date range.
+
 ## Sentiment scaffold
 
 Import a CSV with columns `ts`, `symbol`, `sentiment`:
@@ -75,8 +83,8 @@ data/
   raw/
     ticks/
       source=ib/
-        symbol=AAPL/
-          date=2025-02-01/
+        date=2025-02-01/
+          symbol=AAPL/
             part-*.parquet
   curated/
 ```

@@ -71,35 +71,38 @@ def _ticks_to_frame(what: str, ticks: Iterable) -> pl.DataFrame:
 
 def fetch_ticks(cfg: FetchConfig) -> pl.DataFrame:
     ib = IB()
-    ib.connect(cfg.host, cfg.port, clientId=cfg.client_id)
+    try:
+        ib.connect(cfg.host, cfg.port, clientId=cfg.client_id)
 
-    contract = Stock(cfg.symbol, cfg.exchange, cfg.currency)
-    ib.qualifyContracts(contract)
+        contract = Stock(cfg.symbol, cfg.exchange, cfg.currency)
+        ib.qualifyContracts(contract)
 
-    all_ticks: List = []
-    cursor = cfg.start
+        all_ticks: List = []
+        cursor = cfg.start
 
-    # IB typically limits historical tick responses (~1000 ticks per call).
-    while cursor < cfg.end and len(all_ticks) < cfg.max_ticks:
-        remaining = cfg.max_ticks - len(all_ticks)
-        batch = ib.reqHistoricalTicks(
-            contract,
-            startDateTime=cursor,
-            endDateTime=cfg.end,
-            numberOfTicks=min(1000, remaining),
-            whatToShow=cfg.what,
-            useRth=cfg.use_rth,
-            ignoreSize=False,
-        )
-        if not batch:
-            break
+        # IB typically limits historical tick responses (~1000 ticks per call).
+        while cursor < cfg.end and len(all_ticks) < cfg.max_ticks:
+            remaining = cfg.max_ticks - len(all_ticks)
+            batch = ib.reqHistoricalTicks(
+                contract,
+                startDateTime=cursor,
+                endDateTime=cfg.end,
+                numberOfTicks=min(1000, remaining),
+                whatToShow=cfg.what,
+                useRth=cfg.use_rth,
+                ignoreSize=False,
+            )
+            if not batch:
+                break
 
-        all_ticks.extend(batch)
-        last_ts = batch[-1].time
-        cursor = last_ts + timedelta(seconds=1)
+            all_ticks.extend(batch)
+            last_ts = batch[-1].time
+            cursor = last_ts + timedelta(seconds=1)
 
-    ib.disconnect()
-    return _ticks_to_frame(cfg.what, all_ticks)
+        return _ticks_to_frame(cfg.what, all_ticks)
+    finally:
+        if ib.isConnected():
+            ib.disconnect()
 
 
 def main() -> None:

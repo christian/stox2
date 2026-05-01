@@ -22,17 +22,17 @@ def forward_returns(
     out = df.sort("ts").with_columns(
         [
             pl.col(price_col).alias("price"),
-            (pl.col(price_col) / pl.col(price_col).shift(-1) - 1).alias("ret_1tick"),
+            (pl.col(price_col).shift(-1) / pl.col(price_col) - 1).alias("ret_1tick"),
+            (pl.col("ts") + horizon).alias("ts_target"),
         ]
     )
 
-    # Forward return: price(t+h)/price(t) - 1
+    # Forward return: first observed price at or after t+h divided by price(t).
     out = out.join_asof(
         out.select(["ts", "price"]).rename({"ts": "ts_fwd", "price": "price_fwd"}),
-        left_on="ts",
+        left_on="ts_target",
         right_on="ts_fwd",
         strategy="forward",
-        tolerance=horizon,
     ).with_columns((pl.col("price_fwd") / pl.col("price") - 1).alias("ret_fwd"))
 
-    return out
+    return out.drop("ts_target")

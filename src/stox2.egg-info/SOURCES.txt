@@ -2,6 +2,8 @@ README.md
 pyproject.toml
 src/stox/__init__.py
 src/stox/config.py
+src/stox/explore.py
+src/stox/frontend.py
 src/stox/sentiment.py
 src/stox/storage.py
 src/stox/features/__init__.py
@@ -15,3 +17,6 @@ src/stox2.egg-info/SOURCES.txt
 src/stox2.egg-info/dependency_links.txt
 src/stox2.egg-info/requires.txt
 src/stox2.egg-info/top_level.txt
+tests/test_explore.py
+tests/test_returns.py
+tests/test_storage.py
