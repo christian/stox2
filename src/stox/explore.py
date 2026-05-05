@@ -156,6 +156,22 @@ def load_ticks(
     return duckdb.sql(query).df()
 
 
+def load_symbol_counts(*, source: str = "ib") -> pd.DataFrame:
+    path_glob = ticks_glob(source=source)
+    if not _ticks_exists(path_glob):
+        return pd.DataFrame(columns=["symbol", "rows"])
+
+    query = f"""
+        SELECT
+            symbol,
+            COUNT(*) AS rows
+        FROM {ticks_scan(source=source)}
+        GROUP BY symbol
+        ORDER BY rows DESC, symbol
+    """
+    return duckdb.sql(query).df()
+
+
 def load_chart_series(
     *,
     source: str = "ib",
@@ -166,7 +182,7 @@ def load_chart_series(
 ) -> pd.DataFrame:
     path_glob = ticks_glob(source=source)
     if not _ticks_exists(path_glob):
-        return pd.DataFrame(columns=["bucket_ts", "session_date", "close_price"])
+        return pd.DataFrame(columns=["bucket_ts", "session_date", "close_price", "volume"])
 
     bucket_exprs = {
         "1min": "date_trunc('minute', ts)",
@@ -189,7 +205,8 @@ def load_chart_series(
         SELECT
             {bucket_exprs[bucket]} AS bucket_ts,
             date AS session_date,
-            arg_max(last, ts) AS close_price
+            arg_max(last, ts) AS close_price,
+            SUM(size) AS volume
         FROM {ticks_scan(source=source)}
         {where_clause}
         GROUP BY bucket_ts, session_date

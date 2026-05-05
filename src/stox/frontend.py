@@ -6,7 +6,7 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-from .explore import describe_ticks, load_chart_series, load_tick_summary, load_ticks
+from .explore import describe_ticks, load_chart_series, load_symbol_counts, load_tick_summary, load_ticks
 
 
 def _range_start(max_date, days: int):
@@ -39,27 +39,12 @@ def _render_settings(info) -> None:
     st.write(f"Date range: `{info.min_date}` to `{info.max_date}`")
 
     st.subheader("Symbols")
+    symbol_counts = load_symbol_counts()
     st.dataframe(
-        pd.DataFrame({"symbol": info.symbols}),
+        symbol_counts,
         use_container_width=True,
         hide_index=True,
     )
-
-
-def _render_navigation() -> str:
-    current_page = st.session_state.get("page", "Explorer")
-    with st.sidebar:
-        st.header("stox2 Tick Explorer")
-        explorer = st.button("Explorer", use_container_width=True)
-        settings = st.button("Settings", use_container_width=True)
-
-    if explorer:
-        current_page = "Explorer"
-    if settings:
-        current_page = "Settings"
-
-    st.session_state["page"] = current_page
-    return current_page
 
 
 def _chart_bucket(days: int) -> tuple[str, str]:
@@ -79,7 +64,7 @@ def _with_session_breaks(chart_data: pd.DataFrame) -> pd.DataFrame:
         frames.append(group)
         frames.append(
             pd.DataFrame(
-                [{"bucket_ts": pd.NaT, "session_date": None, "close_price": None}]
+                [{"bucket_ts": pd.NaT, "session_date": None, "close_price": None, "volume": None}]
             )
         )
     return pd.concat(frames, ignore_index=True)
@@ -99,9 +84,37 @@ def _price_domain(chart_data: pd.DataFrame) -> list[float] | None:
     return [low - pad, high + pad]
 
 
-def main() -> None:
-    st.set_page_config(page_title="stox2 Explorer", layout="wide")
+def _format_summary(summary: pd.DataFrame) -> pd.DataFrame:
+    if summary.empty:
+        return summary
 
+    out = summary.copy()
+    return out
+
+
+def _style_summary(summary: pd.DataFrame):
+    def _pct_color(value):
+        if pd.isna(value):
+            return ""
+        if value > 0:
+            return "color: #17803d; font-weight: 600;"
+        if value < 0:
+            return "color: #c62828; font-weight: 600;"
+        return ""
+
+    return (
+        _format_summary(summary)
+        .style.format(
+            {
+                "close_price": "{:.2f}",
+                "prev_close_pct": lambda value: "" if pd.isna(value) else f"{value:+.2f}%",
+            }
+        )
+        .map(_pct_color, subset=["prev_close_pct"])
+    )
+
+
+def render_empty_state() -> None:
     info = describe_ticks()
     if info.row_count == 0:
         st.title("stox2 Tick Explorer")
@@ -110,30 +123,39 @@ def main() -> None:
             "uv run python -m stox.ingest.ib_fetch --symbol AAPL --start 2025-02-01T14:30:00Z "
             "--end 2025-02-01T20:00:00Z --port 4001"
         )
+        return True
+    return False
+
+
+def render_settings_page() -> None:
+    if render_empty_state():
+        return
+    _render_settings(describe_ticks())
+
+
+def render_explorer_page() -> None:
+    if render_empty_state():
         return
 
-    page = _render_navigation()
-    if page == "Settings":
-        _render_settings(info)
-        return
+    info = describe_ticks()
 
-    with st.sidebar:
-        st.header("Filters")
-        selected_symbol = st.selectbox("Symbol", info.symbols, index=0)
-
-        min_date = info.min_date
-        max_date = info.max_date
-        range_preset = st.selectbox(
-            "Range",
-            ["Last day", "Last 5 days", "Last 30 days"],
-            index=1,
-        )
-        days = {"Last day": 1, "Last 5 days": 5, "Last 30 days": 30}[range_preset]
-
-        row_limit = st.slider("Raw tick rows", min_value=100, max_value=10000, value=2000, step=100)
+    selected_symbol = st.pills(
+        "Symbol",
+        info.symbols,
+        selection_mode="single",
+        default=info.symbols[0],
+    )
+    if selected_symbol is None:
+        selected_symbol = info.symbols[0]
 
     st.title(selected_symbol)
     st.caption("Browse locally stored IB parquet ticks by date range.")
+
+    min_date = info.min_date
+    max_date = info.max_date
+    range_preset = st.session_state.get("range_preset", "Last 5 days")
+    days = {"Last day": 1, "Last 5 days": 5, "Last 30 days": 30}[range_preset]
+    row_limit = st.session_state.get("row_limit", 2000)
 
     end_date = max_date
     start_date = max(min_date, _range_start(max_date, days)) if min_date and max_date else None
@@ -149,7 +171,7 @@ def main() -> None:
     )
 
     st.subheader("Daily Summary")
-    st.dataframe(summary, use_container_width=True, hide_index=True)
+    st.dataframe(_style_summary(summary), use_container_width=True, hide_index=True)
 
     if not chart_series.empty:
         chart_data = chart_series.copy()
@@ -169,9 +191,38 @@ def main() -> None:
         )
         st.altair_chart(chart, use_container_width=True)
 
+        st.subheader("Aggregated Volume")
+        volume_chart = (
+            alt.Chart(chart_data)
+            .mark_bar()
+            .encode(
+                x=alt.X("bucket_ts:T", title="Time"),
+                y=alt.Y("volume:Q", title="Volume"),
+            )
+            .properties(height=220)
+        )
+        st.altair_chart(volume_chart, use_container_width=True)
+
+    st.pills(
+        "Range",
+        ["Last day", "Last 5 days", "Last 30 days"],
+        selection_mode="single",
+        default=range_preset,
+        key="range_preset",
+    )
+
     st.subheader("Raw Ticks")
     st.dataframe(ticks, use_container_width=True, hide_index=True)
 
+    st.slider(
+        "Raw tick rows",
+        min_value=100,
+        max_value=10000,
+        value=row_limit,
+        step=100,
+        key="row_limit",
+    )
+
 
 if __name__ == "__main__":
-    main()
+    render_explorer_page()

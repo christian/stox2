@@ -61,6 +61,7 @@ uv run streamlit run streamlit_app.py
 ```
 
 This opens a small local UI for browsing tick parquet data by symbol and date range.
+The app exposes `Explorer` and `Settings` in the sidebar.
 
 ## Sentiment scaffold
 

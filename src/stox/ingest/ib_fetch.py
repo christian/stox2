@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import time
 from typing import Iterable, List
 
 import polars as pl
@@ -24,6 +25,8 @@ class FetchConfig:
     host: str
     port: int
     client_id: int
+    reconnect_retries: int
+    retry_delay_seconds: float
 
 
 def _parse_dt(value: str) -> datetime:
@@ -69,13 +72,32 @@ def _ticks_to_frame(what: str, ticks: Iterable) -> pl.DataFrame:
     return pl.DataFrame(rows)
 
 
+def _is_retryable_connection_error(exc: Exception) -> bool:
+    if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
+        return True
+
+    message = str(exc).lower()
+    retryable_markers = [
+        "not connected",
+        "connection refused",
+        "connection reset",
+        "socket",
+        "broken pipe",
+        "timed out",
+    ]
+    return any(marker in message for marker in retryable_markers)
+
+
+def _connect_and_qualify(ib: IB, cfg: FetchConfig, contract: Stock) -> None:
+    ib.connect(cfg.host, cfg.port, clientId=cfg.client_id)
+    ib.qualifyContracts(contract)
+
+
 def fetch_ticks(cfg: FetchConfig) -> pl.DataFrame:
     ib = IB()
     try:
-        ib.connect(cfg.host, cfg.port, clientId=cfg.client_id)
-
         contract = Stock(cfg.symbol, cfg.exchange, cfg.currency)
-        ib.qualifyContracts(contract)
+        _connect_and_qualify(ib, cfg, contract)
 
         all_ticks: List = []
         cursor = cfg.start
@@ -83,15 +105,35 @@ def fetch_ticks(cfg: FetchConfig) -> pl.DataFrame:
         # IB typically limits historical tick responses (~1000 ticks per call).
         while cursor < cfg.end and len(all_ticks) < cfg.max_ticks:
             remaining = cfg.max_ticks - len(all_ticks)
-            batch = ib.reqHistoricalTicks(
-                contract,
-                startDateTime=cursor,
-                endDateTime=cfg.end,
-                numberOfTicks=min(1000, remaining),
-                whatToShow=cfg.what,
-                useRth=cfg.use_rth,
-                ignoreSize=False,
-            )
+            for attempt in range(cfg.reconnect_retries + 1):
+                try:
+                    if not ib.isConnected():
+                        _connect_and_qualify(ib, cfg, contract)
+
+                    batch = ib.reqHistoricalTicks(
+                        contract,
+                        startDateTime=cursor,
+                        endDateTime=cfg.end,
+                        numberOfTicks=min(1000, remaining),
+                        whatToShow=cfg.what,
+                        useRth=cfg.use_rth,
+                        ignoreSize=False,
+                    )
+                    break
+                except Exception as exc:
+                    if not _is_retryable_connection_error(exc) or attempt >= cfg.reconnect_retries:
+                        raise
+
+                    print(
+                        f"Connection lost while fetching {cfg.symbol} at {cursor.isoformat()}; "
+                        f"retrying {attempt + 1}/{cfg.reconnect_retries}..."
+                    )
+                    if ib.isConnected():
+                        ib.disconnect()
+                    time.sleep(cfg.retry_delay_seconds)
+            else:
+                raise RuntimeError("unreachable retry loop state")
+
             if not batch:
                 break
 
@@ -118,6 +160,8 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=7497)
     parser.add_argument("--client-id", type=int, default=7)
+    parser.add_argument("--reconnect-retries", type=int, default=5)
+    parser.add_argument("--retry-delay", type=float, default=2.0, help="Seconds between reconnect attempts")
 
     args = parser.parse_args()
 
@@ -133,6 +177,8 @@ def main() -> None:
         host=args.host,
         port=args.port,
         client_id=args.client_id,
+        reconnect_retries=args.reconnect_retries,
+        retry_delay_seconds=args.retry_delay,
     )
 
     df = fetch_ticks(cfg)

@@ -5,7 +5,7 @@ import unittest
 
 import polars as pl
 
-from stox.explore import describe_ticks, load_chart_series, load_tick_summary
+from stox.explore import describe_ticks, load_chart_series, load_symbol_counts, load_tick_summary
 from stox.storage import write_ticks
 
 
@@ -43,7 +43,12 @@ class ExploreTest(unittest.TestCase):
 
                 chart = load_chart_series(symbol="AAPL", bucket="day")
                 self.assertEqual(chart["close_price"].tolist(), [101.0, 102.0])
+                self.assertEqual(chart["volume"].tolist(), [30, 30])
                 self.assertEqual(chart["session_date"].astype(str).tolist(), ["2025-02-01", "2025-02-02"])
+
+                symbol_counts = load_symbol_counts()
+                self.assertEqual(symbol_counts["symbol"].tolist(), ["AAPL"])
+                self.assertEqual(symbol_counts["rows"].tolist(), [3])
             finally:
                 if old_root is None:
                     os.environ.pop("STX_DATA_ROOT", None)
